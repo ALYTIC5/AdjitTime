@@ -1,9 +1,8 @@
-// AdjitTime — Mobile Calendar (improved UX + palette) + Creator-only delete
-// - Full-name + DOB login -> cookie
-// - Tabs: Calendar (read-only), "You're mine bitch" (agenda), "Formal request for possession" (create)
-// - Status: "stone" (set in stone) vs "pencil" (set in pencil) with dots/colors
-// - Creator shown on items; only creator sees delete button; server double-checks
-// - In-memory data (resets on restart)
+// AdjitTime — Calendar + Agenda + Create + Criticism Page (notes)
+// - Full-name + DOB login -> cookie (7 days)
+// - Tabs: Calendar (read-only), "You're mine bitch" (agenda), "Formal request for possession" (create), "I can deal with criticism" (notes)
+// - Appointments: status stone/pencil, creator shown, creator-only delete (server enforced)
+// - Notes: either user can add; listed newest-first (in-memory)
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -22,7 +21,11 @@ const USERS = [
 
 // appointment: { id, title, startAtISO, durationMins, status: 'stone'|'pencil', note, createdBySlug, createdAtISO }
 let APPOINTMENTS = [];
-let nextId = 1;
+let nextApptId = 1;
+
+// note: { id, content, createdBySlug, createdAtISO }
+let NOTES = [];
+let nextNoteId = 1;
 
 // ---- Helpers ----
 function getUserFromCookie(req) {
@@ -68,13 +71,13 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
   <meta name="color-scheme" content="light dark" />
   <style>
     :root{
-      /* Pleasant, inviting palette with strong text contrast */
-      --bg: #faf9ff;         /* soft lilac-tinted background */
-      --fg: #0b0b0c;         /* near-black text */
-      --muted: #6b7280;      /* slate */
+      /* Inviting palette with clear contrast */
+      --bg: #faf9ff;
+      --fg: #0b0b0c;
+      --muted: #6b7280;
       --border: #e6e6f0;
       --card: #ffffff;
-      --accent: #6d28d9;     /* violet-700 */
+      --accent: #6d28d9;
       --accent-fg: #ffffff;
       --shadow: 0 10px 25px rgba(0,0,0,.06);
 
@@ -93,7 +96,7 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
         --muted: #a1a1aa;
         --border: #1f2330;
         --card: #0f1117;
-        --accent: #a78bfa;   /* lighter violet */
+        --accent: #a78bfa;
         --accent-fg: #0b0b0c;
         --shadow: 0 10px 25px rgba(0,0,0,.35);
       }
@@ -135,7 +138,7 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
       text-decoration:none; color: var(--fg);
       border:1px solid var(--border); padding:10px 14px; border-radius: 999px; font-size: 14px;
       background: var(--card);
-      min-height: 44px; /* HIG-friendly touch target */
+      min-height: 44px;
     }
     .tab.active{ background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
@@ -151,7 +154,7 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
       appearance: none; border: 1px solid transparent; text-decoration:none; cursor:pointer;
       padding: 12px 14px; border-radius: 12px; font-weight: 600;
       background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow);
-      min-height: 44px; /* HIG-friendly */
+      min-height: 44px;
     }
     .secondary{ background: transparent; color: var(--fg); border-color: var(--border); }
 
@@ -159,7 +162,7 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
     label{ font-weight: 600; font-size: 13px; }
     input, textarea, select{
       width:100%; padding: 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px; outline: none;
-      min-height: 44px; /* better mobile targets */
+      min-height: 44px;
     }
     textarea{ resize: vertical; min-height: 88px; }
 
@@ -189,7 +192,7 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
       color: var(--fg);
     }
     .cal-daynum{ font-size:14px; font-weight:800; line-height:1; color: var(--fg); }
-    .cal-out .cal-daynum{ opacity:.58; }  /* only dim the number, not the whole cell */
+    .cal-out .cal-daynum{ opacity:.58; }
     .cal-today{ outline: 2px solid color-mix(in srgb, var(--stone) 70%, transparent); border-radius:10px; }
     .cal-dots{ display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
     .cal-dot{ width:9px; height:9px; border-radius:999px; outline:1px solid color-mix(in srgb, black 8%, transparent); }
@@ -235,7 +238,7 @@ app.get('/login', (_req, res) => {
           <div>
             <label for="fullName">Full Name</label>
             <input id="fullName" name="fullName" placeholder="Adam Kiernan or Kuljit Dhami" required />
-            <div class="muted">Use full name.</div>
+            <div class="muted">Case doesn’t matter. Use full name.</div>
           </div>
           <div>
             <label for="dob">Date of Birth</label>
@@ -277,9 +280,15 @@ app.get('/logout', (req, res) => {
 
 app.get('/dashboard', requireLogin, (req, res) => {
   const user = req.user;
-  const tab = (req.query.tab === 'calendar') ? 'calendar' : (req.query.tab === 'request' ? 'request' : 'mine');
+  const tab = (req.query.tab === 'calendar')
+    ? 'calendar'
+    : (req.query.tab === 'request')
+      ? 'request'
+      : (req.query.tab === 'criticism')
+        ? 'criticism'
+        : 'mine';
 
-  // Calendar section
+  // ----- Calendar section -----
   const calendarSection = `
     <div class="card">
       <div class="cal-header">
@@ -300,23 +309,21 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // Agenda section
+  // ----- Agenda section -----
   let listHTML = '';
   if (APPOINTMENTS.length === 0) {
-    listHTML = `<div class="empty">No appointments yet. Create one in “Formal Request For Possession”.</div>`;
+    listHTML = `<div class="empty">No appointments yet. Create one in “Formal request for possession”.</div>`;
   } else {
     const ordered = [...APPOINTMENTS].sort((a, b) => b.id - a.id);
     listHTML = '<ul>';
     for (const appt of ordered) {
       const whoUser = USERS.find(u => u.slug === appt.createdBySlug);
-      const who = whoUser?.fullName || appt.createdBySlug;
       const whoChip = whoUser ? `<span class="creator ${whoUser.slug}">${whoUser.fullName}</span>` : '';
       const human = toHumanLocal(appt.startAtISO);
       const statusPill = appt.status === 'stone'
         ? `<span class="pill"><span class="dot" style="background: var(--stone)"></span> set in stone</span>`
         : `<span class="pill"><span class="dot" style="background: var(--pencil)"></span> set in pencil</span>`;
-
-      const showDelete = appt.createdBySlug === user.slug; // UI: only creator sees button
+      const showDelete = appt.createdBySlug === user.slug;
 
       listHTML += `
         <li class="app">
@@ -340,9 +347,9 @@ app.get('/dashboard', requireLogin, (req, res) => {
     }
     listHTML += '</ul>';
   }
-  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're Mine Bitch</h2>${listHTML}</div>`;
+  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're mine bitch</h2>${listHTML}</div>`;
 
-  // Create section
+  // ----- Create section -----
   const formSection = `
     <div class="card">
       <div class="kicker">Create</div>
@@ -377,18 +384,71 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
+  // ----- Criticism (notes) section -----
+  let notesHTML = '';
+  if (NOTES.length === 0) {
+    notesHTML = `<div class="empty">No notes yet. Add your ideas, complaints, or wild feature requests below.</div>`;
+  } else {
+    const orderedNotes = [...NOTES].sort((a,b) => b.id - a.id);
+    notesHTML = '<ul>';
+    for (const n of orderedNotes) {
+      const whoUser = USERS.find(u => u.slug === n.createdBySlug);
+      const whoChip = whoUser ? `<span class="creator ${whoUser.slug}">${whoUser.fullName}</span>` : '';
+      notesHTML += `
+        <li class="app">
+          <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between;">
+            <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
+              <strong>Note</strong> ${whoChip}
+            </div>
+            <div class="muted">${toHumanLocal(n.createdAtISO)}</div>
+          </div>
+          <div style="margin-top:8px; white-space:pre-wrap;">${escapeHTML(n.content)}</div>
+        </li>
+      `;
+    }
+    notesHTML += '</ul>';
+  }
+
+  const criticismSection = `
+    <div class="card">
+      <div class="kicker">Feedback</div>
+      <h2>I can deal with criticism</h2>
+      <form method="POST" action="/feedback/create">
+        <div>
+          <label for="content">Add a note</label>
+          <textarea id="content" name="content" rows="4" placeholder="Tell us what would make this app better…" required></textarea>
+        </div>
+        <input type="submit" value="Add note" />
+      </form>
+    </div>
+    <div class="card">
+      <div class="kicker">Notes</div>
+      ${notesHTML}
+    </div>
+  `;
+
+  // ----- Tabs -----
   const tabsHTML = `
     <div class="tabs">
       <a class="tab ${tab === 'calendar' ? 'active' : ''}" href="/dashboard?tab=calendar">Calendar</a>
       <a class="tab ${tab === 'mine' ? 'active' : ''}" href="/dashboard?tab=mine">You're mine bitch</a>
       <a class="tab ${tab === 'request' ? 'active' : ''}" href="/dashboard?tab=request">Formal request for possession</a>
+      <a class="tab ${tab === 'criticism' ? 'active' : ''}" href="/dashboard?tab=criticism">I can deal with criticism</a>
     </div>
   `;
 
   const content = `
     ${tabsHTML}
     <div class="grid">
-      ${tab === 'calendar' ? calendarSection : tab === 'mine' ? agendaSection : formSection}
+      ${
+        tab === 'calendar'
+          ? calendarSection
+          : tab === 'mine'
+            ? agendaSection
+            : tab === 'request'
+              ? formSection
+              : criticismSection
+      }
     </div>
   `;
 
@@ -404,14 +464,16 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const USERS = ${safeUsers};
   const ME = ${safeMe};
 
-  const dowRow = document.getElementById('dowRow');
+  // Only run calendar logic on the calendar tab
   const grid = document.getElementById('calGrid');
+  if (!grid) return;
+
+  const dowRow = document.getElementById('dowRow');
   const titleEl = document.getElementById('calTitle');
   const dayDetails = document.getElementById('dayDetails');
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
   const todayBtn = document.getElementById('todayBtn');
-  if (!grid) return; // not on calendar tab
 
   // Build DOW header (Mon-Sun)
   const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -419,7 +481,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     const el = document.createElement('div');
     el.className = 'cal-dow';
     el.textContent = d;
-    dowRow.appendChild(el);
+    document.getElementById('dowRow').appendChild(el);
   });
 
   const fmtDayKey = (d) => {
@@ -498,7 +560,6 @@ app.get('/dashboard', requireLogin, (req, res) => {
         dot.style.background = color;
         dotsWrap.appendChild(dot);
       };
-      // Up to 3 dots, preferring stone
       stones.slice(0,3).forEach(()=>addDot('var(--stone)'));
       if (stones.length < 3) {
         pencils.slice(0, 3 - stones.length).forEach(()=>addDot('var(--pencil)'));
@@ -516,14 +577,15 @@ app.get('/dashboard', requireLogin, (req, res) => {
   }
 
   function showDay(date, items){
-    dayDetails.innerHTML = '';
+    const container = dayDetails;
+    container.innerHTML = '';
     const h = document.createElement('div'); h.className='kicker'; h.textContent='Day';
     const t = document.createElement('h2'); t.style.margin='4px 0 10px 0';
     t.textContent = date.toLocaleDateString(undefined,{ weekday:'long', year:'numeric', month:'long', day:'numeric' });
-    dayDetails.appendChild(h); dayDetails.appendChild(t);
+    container.appendChild(h); container.appendChild(t);
 
     if (!items.length) {
-      const empty = document.createElement('div'); empty.className='empty'; empty.textContent='No appointments on this day.'; dayDetails.appendChild(empty); return;
+      const empty = document.createElement('div'); empty.className='empty'; empty.textContent='No appointments on this day.'; container.appendChild(empty); return;
     }
 
     const ul = document.createElement('ul');
@@ -550,7 +612,6 @@ app.get('/dashboard', requireLogin, (req, res) => {
       left.appendChild(whoChip);
       top.appendChild(left);
 
-      // delete only if creator
       if (appt.createdBySlug === ME) {
         const form = document.createElement('form'); form.method='POST'; form.action='/appointments/delete'; form.onsubmit=()=>confirm('Delete this appointment?');
         const hid = document.createElement('input'); hid.type='hidden'; hid.name='id'; hid.value=String(appt.id);
@@ -570,12 +631,12 @@ app.get('/dashboard', requireLogin, (req, res) => {
       }
       ul.appendChild(li);
     });
-    dayDetails.appendChild(ul);
+    container.appendChild(ul);
   }
 
-  prevBtn.addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()-1, 1); render(); });
-  nextBtn.addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()+1, 1); render(); });
-  todayBtn.addEventListener('click', ()=>{ viewDate = new Date(); render(); });
+  document.getElementById('prevBtn').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()-1, 1); render(); });
+  document.getElementById('nextBtn').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()+1, 1); render(); });
+  document.getElementById('todayBtn').addEventListener('click', ()=>{ viewDate = new Date(); render(); });
 
   render();
 })();
@@ -585,7 +646,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   res.send(layoutHTML('Dashboard', content, user, '', afterBody));
 });
 
-// Create appointment
+// ---- Create appointment ----
 app.post('/appointments/create', requireLogin, (req, res) => {
   const user = req.user;
   const title = (req.body.title || '').trim();
@@ -612,7 +673,7 @@ app.post('/appointments/create', requireLogin, (req, res) => {
   const durationMins = Math.max(1, parseInt(durationMinsRaw || '60', 10) || 60);
 
   const appt = {
-    id: nextId++,
+    id: nextApptId++,
     title: escapeHTML(title),
     startAtISO,
     durationMins,
@@ -626,7 +687,7 @@ app.post('/appointments/create', requireLogin, (req, res) => {
   res.redirect('/dashboard?tab=mine');
 });
 
-// Delete appointment (server enforces creator only)
+// ---- Delete appointment (creator only) ----
 app.post('/appointments/delete', requireLogin, (req, res) => {
   const user = req.user;
   const id = parseInt((req.body.id || '').trim(), 10);
@@ -637,6 +698,33 @@ app.post('/appointments/delete', requireLogin, (req, res) => {
     }
   }
   res.redirect('/dashboard?tab=mine');
+});
+
+// ---- Create feedback note ----
+app.post('/feedback/create', requireLogin, (req, res) => {
+  const user = req.user;
+  const content = (req.body.content || '').trim();
+  if (!content) {
+    const body = `
+      <div class="grid">
+        <div class="card">
+          <h2>Missing note</h2>
+          <p class="muted">Please write something before submitting.</p>
+          <a class="button secondary" href="/dashboard?tab=criticism">Back</a>
+        </div>
+      </div>
+    `;
+    return res.send(layoutHTML('Error', body, user));
+  }
+
+  NOTES.push({
+    id: nextNoteId++,
+    content,
+    createdBySlug: user.slug,
+    createdAtISO: new Date().toISOString(),
+  });
+
+  res.redirect('/dashboard?tab=criticism');
 });
 
 // ---- Start ----
