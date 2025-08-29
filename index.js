@@ -1,8 +1,8 @@
-// AdjitTime — Calendar + Agenda + Create + Criticism Page (notes)
+// AdjitTime — Calendar + Agenda + Create + Criticism Page (notes w/ edit & delete)
 // - Full-name + DOB login -> cookie (7 days)
 // - Tabs: Calendar (read-only), "You're mine bitch" (agenda), "Formal request for possession" (create), "I can deal with criticism" (notes)
 // - Appointments: status stone/pencil, creator shown, creator-only delete (server enforced)
-// - Notes: either user can add; listed newest-first (in-memory)
+// - Notes: either user can add; creator-only edit/delete; newest-first (in-memory)
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -394,13 +394,25 @@ app.get('/dashboard', requireLogin, (req, res) => {
     for (const n of orderedNotes) {
       const whoUser = USERS.find(u => u.slug === n.createdBySlug);
       const whoChip = whoUser ? `<span class="creator ${whoUser.slug}">${whoUser.fullName}</span>` : '';
+      const canEdit = n.createdBySlug === user.slug;
       notesHTML += `
         <li class="app">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between;">
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <strong>Note</strong> ${whoChip}
             </div>
-            <div class="muted">${toHumanLocal(n.createdAtISO)}</div>
+            <div class="inline-actions">
+              <div class="muted" style="margin-right:8px">${toHumanLocal(n.createdAtISO)}</div>
+              ${canEdit ? `
+                <form method="GET" action="/feedback/edit/${n.id}">
+                  <button class="secondary" title="Edit">Edit</button>
+                </form>
+                <form method="POST" action="/feedback/delete" onsubmit="return confirm('Delete this note?')">
+                  <input type="hidden" name="id" value="${n.id}" />
+                  <button class="secondary danger" title="Delete">Delete</button>
+                </form>
+              ` : ``}
+            </div>
           </div>
           <div style="margin-top:8px; white-space:pre-wrap;">${escapeHTML(n.content)}</div>
         </li>
@@ -487,7 +499,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const fmtDayKey = (d) => {
     const y = d.getFullYear();
     const m = (d.getMonth()+1).toString().padStart(2,'0');
-    const day = d.getDate().toString().padStart(2,'0');
+       const day = d.getDate().toString().padStart(2,'0');
     return \`\${y}-\${m}-\${day}\`;
   };
   const sameDay = (a,b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
@@ -724,6 +736,99 @@ app.post('/feedback/create', requireLogin, (req, res) => {
     createdAtISO: new Date().toISOString(),
   });
 
+  res.redirect('/dashboard?tab=criticism');
+});
+
+// ---- Edit feedback note (page) ----
+app.get('/feedback/edit/:id', requireLogin, (req, res) => {
+  const user = req.user;
+  const id = parseInt(req.params.id, 10);
+  const note = NOTES.find(n => n.id === id);
+  if (!note) {
+    const body = `
+      <div class="grid">
+        <div class="card">
+          <h2>Not found</h2>
+          <p class="muted">That note does not exist.</p>
+          <a class="button secondary" href="/dashboard?tab=criticism">Back</a>
+        </div>
+      </div>
+    `;
+    return res.send(layoutHTML('Note not found', body, user));
+  }
+  if (note.createdBySlug !== user.slug) {
+    const body = `
+      <div class="grid">
+        <div class="card">
+          <h2>Permission denied</h2>
+          <p class="muted">Only the note's creator can edit it.</p>
+          <a class="button secondary" href="/dashboard?tab=criticism">Back</a>
+        </div>
+      </div>
+    `;
+    return res.send(layoutHTML('No permission', body, user));
+  }
+
+  const whoUser = USERS.find(u => u.slug === note.createdBySlug);
+  const body = `
+    <div class="grid">
+      <div class="card">
+        <div class="kicker">Edit</div>
+        <h2>Edit note</h2>
+        <p class="muted" style="margin-top:-4px">Created by ${whoUser ? escapeHTML(whoUser.fullName) : escapeHTML(note.createdBySlug)} · ${toHumanLocal(note.createdAtISO)}</p>
+        <form method="POST" action="/feedback/edit/${note.id}">
+          <div>
+            <label for="content">Content</label>
+            <textarea id="content" name="content" rows="6" required>${escapeHTML(note.content)}</textarea>
+          </div>
+          <div class="row">
+            <input type="submit" value="Save changes" />
+            <a class="button secondary" href="/dashboard?tab=criticism">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  `;
+  res.send(layoutHTML('Edit note', body, user));
+});
+
+// ---- Edit feedback note (submit) ----
+app.post('/feedback/edit/:id', requireLogin, (req, res) => {
+  const user = req.user;
+  const id = parseInt(req.params.id, 10);
+  const note = NOTES.find(n => n.id === id);
+  if (!note) return res.redirect('/dashboard?tab=criticism');
+  if (note.createdBySlug !== user.slug) return res.redirect('/dashboard?tab=criticism');
+
+  const content = (req.body.content || '').trim();
+  if (!content) {
+    const body = `
+      <div class="grid">
+        <div class="card">
+          <h2>Missing note</h2>
+          <p class="muted">Please write something before saving.</p>
+          <a class="button secondary" href="/feedback/edit/${id}">Back</a>
+        </div>
+      </div>
+    `;
+    return res.send(layoutHTML('Error', body, user));
+  }
+
+  note.content = content; // stored raw; escaped on render
+  // (Optional) could track updatedAtISO if you want
+  res.redirect('/dashboard?tab=criticism');
+});
+
+// ---- Delete feedback note (creator only) ----
+app.post('/feedback/delete', requireLogin, (req, res) => {
+  const user = req.user;
+  const id = parseInt((req.body.id || '').trim(), 10);
+  if (Number.isInteger(id)) {
+    const note = NOTES.find(n => n.id === id);
+    if (note && note.createdBySlug === user.slug) {
+      NOTES = NOTES.filter(n => n.id !== id);
+    }
+  }
   res.redirect('/dashboard?tab=criticism');
 });
 
