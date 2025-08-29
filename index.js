@@ -388,13 +388,13 @@ app.get('/dashboard', requireLogin, (req, res) => {
     }
     listHTML += '</ul>';
   }
-  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2 style="margin:6px 0 12px 0;">You're mine bitch</h2>${listHTML}</div>`;
+  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2 style="margin:6px 0 12px 0;">You're Mine Bitch</h2>${listHTML}</div>`;
 
   // ----- Create -----
   const formSection = `
     <div class="card">
       <div class="kicker">Create</div>
-      <h2 style="margin:6px 0 12px 0;">Formal request for possession</h2>
+      <h2 style="margin:6px 0 12px 0;">Formal Possession Request</h2>
       <form method="POST" action="/appointments/create">
         <div>
           <label for="title">Title</label>
@@ -465,7 +465,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const criticismSection = `
     <div class="card">
       <div class="kicker">Feedback</div>
-      <h2 style="margin:6px 0 12px 0;">I can deal with criticism</h2>
+      <h2 style="margin:6px 0 12px 0;">I Can Deal With Criticism</h2>
       <form method="POST" action="/feedback/create">
         <div>
           <label for="content">Add a note</label>
