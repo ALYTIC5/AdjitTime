@@ -2,9 +2,9 @@
 // - Login via Name + DOB (prefillable via URL query)
 // - Cookie session (7 days)
 // - Two tabs on /dashboard:
-//    * "You're mine bitch"  (lists all appointments, newest first)
+//    * "You're mine bitch"  (lists all appointments, newest first, can delete)
 //    * "Formal request for possession" (create appointment; duration defaults to 60)
-// - Anyone can create; items show up instantly
+// - Anyone (Adam or Kuljit) can create and delete; items update instantly
 // - Minimal, modern UI with inline CSS (no extra UI libs)
 
 const express = require('express');
@@ -93,48 +93,26 @@ function layoutHTML(title, body, user = null) {
       min-height: 100vh;
     }
     .wrap { max-width: 900px; margin: 0 auto; padding: 28px 18px 60px; }
-    header{
-      display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 18px;
-    }
+    header{ display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom: 18px; }
     .brand { display:flex; align-items:center; gap:10px; }
-    .logo{
-      width:32px; height:32px; border-radius:10px; display:grid; place-items:center;
-      background: linear-gradient(135deg,#111,#333);
-      color:#fff; font-weight:700; box-shadow: var(--shadow);
-    }
+    .logo{ width:32px; height:32px; border-radius:10px; display:grid; place-items:center; background: linear-gradient(135deg,#111,#333); color:#fff; font-weight:700; box-shadow: var(--shadow); }
     h1{ font-size: 18px; margin:0; letter-spacing:.2px; }
     .who{ font-size: 14px; color: var(--muted); }
     .who a{ color: inherit; }
     .grid{ display:grid; gap:14px; }
     .row{ display:flex; flex-wrap:wrap; gap:10px; }
-    .card{
-      background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: var(--shadow);
-    }
+    .card{ background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 18px; box-shadow: var(--shadow); }
     .card h2{ margin: 0 0 8px 0; font-size: 16px; }
     .muted{ color: var(--muted); font-size: 13px; }
     .tabs{ display:flex; gap:10px; margin: 8px 0 12px; flex-wrap: wrap; }
-    .tab{
-      text-decoration:none; color: var(--fg);
-      border:1px solid var(--border); padding:8px 12px; border-radius: 999px; font-size: 14px;
-      transition: transform .05s ease;
-      background: var(--card);
-    }
+    .tab{ text-decoration:none; color: var(--fg); border:1px solid var(--border); padding:8px 12px; border-radius: 999px; font-size: 14px; transition: transform .05s ease; background: var(--card); }
     .tab:hover{ transform: translateY(-1px); }
     .tab.active{ background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-    a.button, button, input[type=submit]{
-      appearance: none; border: none; text-decoration:none; cursor:pointer;
-      padding: 10px 14px; border-radius: 12px; font-weight: 600;
-      background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow);
-    }
-    a.button.secondary, button.secondary, input.secondary{
-      background: transparent; color: var(--fg); border:1px solid var(--border);
-    }
+    a.button, button, input[type=submit]{ appearance: none; border: none; text-decoration:none; cursor:pointer; padding: 10px 14px; border-radius: 12px; font-weight: 600; background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow); }
+    a.button.secondary, button.secondary, input.secondary{ background: transparent; color: var(--fg); border:1px solid var(--border); }
     form{ display:grid; gap: 12px; }
     label{ font-weight: 600; font-size: 13px; }
-    input, textarea, select{
-      width:100%; padding: 12px 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px;
-      outline: none;
-    }
+    input, textarea, select{ width:100%; padding: 12px 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px; outline: none; }
     textarea{ resize: vertical; min-height: 88px; }
     ul{ list-style:none; margin:0; padding:0; display:grid; gap:10px; }
     li.app{ border:1px solid var(--border); border-radius:14px; padding:14px; background: var(--bg); }
@@ -144,6 +122,8 @@ function layoutHTML(title, body, user = null) {
     .empty{ border:1px dashed var(--border); border-radius: 14px; padding: 16px; text-align:center; color: var(--muted); }
     .footer{ margin-top: 24px; text-align:center; color: var(--muted); font-size:12px; }
     code{ background: rgba(125,125,125,.12); padding:2px 6px; border-radius:6px; }
+    .inline-actions{ display:flex; gap:8px; align-items:center; }
+    .danger { border:1px solid var(--border); background: transparent; }
   </style>
 </head>
 <body>
@@ -272,7 +252,13 @@ app.get('/dashboard', requireLogin, (req, res) => {
         <li class="app">
           <div class="split">
             <div><strong>${escapeHTML(appt.title)}</strong></div>
-            <span class="pill">Duration: ${appt.durationMins}m</span>
+            <div class="inline-actions">
+              <span class="pill">Duration: ${appt.durationMins}m</span>
+              <form method="POST" action="/appointments/delete" onsubmit="return confirm('Delete this appointment?')">
+                <input type="hidden" name="id" value="${appt.id}" />
+                <button class="secondary danger" title="Delete">Delete</button>
+              </form>
+            </div>
           </div>
           <div class="muted">When: ${human}</div>
           ${appt.note ? `<div style="margin-top:6px">${escapeHTML(appt.note)}</div>` : ``}
@@ -369,12 +355,23 @@ app.post('/appointments/create', requireLogin, (req, res) => {
   res.redirect('/dashboard?tab=mine');
 });
 
+// Delete appointment (any logged-in user)
+app.post('/appointments/delete', requireLogin, (req, res) => {
+  const idRaw = (req.body.id || '').trim();
+  const id = parseInt(idRaw, 10);
+  if (!Number.isInteger(id)) {
+    return res.redirect('/dashboard?tab=mine');
+  }
+  // Remove by id
+  APPOINTMENTS = APPOINTMENTS.filter(a => a.id !== id);
+  res.redirect('/dashboard?tab=mine');
+});
+
 // --------- Small util: pretty local time ----------
 function toHumanLocal(iso) {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
-    // Use user's local settings; include weekday & short month
     return d.toLocaleString(undefined, {
       weekday: 'short',
       year: 'numeric',
