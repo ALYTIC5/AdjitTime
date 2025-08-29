@@ -235,7 +235,7 @@ app.get('/login', (_req, res) => {
           <div>
             <label for="fullName">Full Name</label>
             <input id="fullName" name="fullName" placeholder="Adam Kiernan or Kuljit Dhami" required />
-            <div class="muted">Case doesn’t matter. Use full name.</div>
+            <div class="muted">Use full name.</div>
           </div>
           <div>
             <label for="dob">Date of Birth</label>
@@ -303,7 +303,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   // Agenda section
   let listHTML = '';
   if (APPOINTMENTS.length === 0) {
-    listHTML = `<div class="empty">No appointments yet. Create one in “Formal request for possession”.</div>`;
+    listHTML = `<div class="empty">No appointments yet. Create one in “Formal Request For Possession”.</div>`;
   } else {
     const ordered = [...APPOINTMENTS].sort((a, b) => b.id - a.id);
     listHTML = '<ul>';
@@ -340,7 +340,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     }
     listHTML += '</ul>';
   }
-  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're mine bitch</h2>${listHTML}</div>`;
+  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're Mine Bitch</h2>${listHTML}</div>`;
 
   // Create section
   const formSection = `
