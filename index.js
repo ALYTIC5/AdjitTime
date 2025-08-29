@@ -1,8 +1,11 @@
-// AdjitTime — Calendar + Agenda + Create + Criticism Page (notes w/ edit & delete)
-// - Full-name + DOB login -> cookie (7 days)
-// - Tabs: Calendar (read-only), "You're mine bitch" (agenda), "Formal request for possession" (create), "I can deal with criticism" (notes)
-// - Appointments: status stone/pencil, creator shown, creator-only delete (server enforced)
-// - Notes: either user can add; creator-only edit/delete; newest-first (in-memory)
+// AdjitTime — Full UX Redesign (Teal/Peach theme + Bottom Nav)
+// Functionality preserved:
+// - Login (full name + DOB) -> cookie (7 days)
+// - Calendar (read-only, month grid, dots, day details)
+// - Agenda list ("You're mine bitch") with creator-only delete
+// - Create ("Formal request for possession") with stone/pencil status
+// - Criticism ("I can deal with criticism") with add + edit + delete (creator-only)
+// Storage: in-memory (resets on restart)
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -61,90 +64,95 @@ function toHumanLocal(iso) {
   } catch { return iso; }
 }
 
-function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
+// ---- Layout (brand-new styles + bottom nav) ----
+function layoutHTML(title, body, user = null, tab = 'calendar', extraHead = '', afterBody = '') {
+  const nav = (key, label, emoji) =>
+    `<a class="bn-item ${tab===key?'active':''}" href="/dashboard?tab=${key}">
+      <span class="bn-emoji" aria-hidden="true">${emoji}</span>
+      <span class="bn-label">${label}</span>
+    </a>`;
+
+  const initials = user ? user.fullName.split(' ').map(x=>x[0]).join('').slice(0,2).toUpperCase() : 'AT';
+
   return `<!doctype html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
   <title>${escapeHTML(title)} · AdjitTime</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
   <meta name="color-scheme" content="light dark" />
   <style>
     :root{
-      /* Inviting palette with clear contrast */
-      --bg: #faf9ff;
-      --fg: #0b0b0c;
-      --muted: #6b7280;
-      --border: #e6e6f0;
+      /* Fresh, inviting palette */
+      --bg: #fff7ed;        /* peach-50 */
+      --fg: #0b0e14;        /* near-black */
+      --muted: #475569;     /* slate-600 */
+      --border: #fed7aa;    /* peach-200 */
       --card: #ffffff;
-      --accent: #6d28d9;
+      --accent: #0ea5a5;    /* teal-500 */
       --accent-fg: #ffffff;
-      --shadow: 0 10px 25px rgba(0,0,0,.06);
+      --shadow: 0 12px 28px rgba(0,0,0,.10);
 
       /* Status colors */
-      --stone: #2563eb;      /* blue for "set in stone" */
-      --pencil: #9ca3af;     /* gray for "set in pencil" */
+      --stone: #10b981;     /* emerald-500 */
+      --pencil: #94a3b8;    /* slate-400 */
 
       /* Creator badges */
-      --adam: #8b5cf6;       /* violet */
-      --kuljit: #f59e0b;     /* amber */
+      --adam: #06b6d4;      /* cyan-500 */
+      --kuljit: #f97316;    /* orange-500 */
     }
     @media (prefers-color-scheme: dark) {
       :root{
-        --bg: #0c0c12;
-        --fg: #f3f4f6;
+        --bg: #0b1220;
+        --fg: #e5e7eb;
         --muted: #a1a1aa;
-        --border: #1f2330;
-        --card: #0f1117;
-        --accent: #a78bfa;
-        --accent-fg: #0b0b0c;
-        --shadow: 0 10px 25px rgba(0,0,0,.35);
+        --border: #1f2937;
+        --card: #0f172a;
+        --accent: #14b8a6;
+        --accent-fg: #061013;
+        --shadow: 0 10px 25px rgba(0,0,0,.45);
       }
-      input, textarea, select { background: #0f1117; color: var(--fg); }
+      input, textarea, select { background: #0b1220; color: var(--fg); }
     }
 
     * { box-sizing: border-box; }
     html, body { margin:0; padding:0; }
     body{
-      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial;
       color: var(--fg);
       background:
-        radial-gradient(1100px 700px at 10% -10%, rgba(109,40,217,.10), transparent 40%),
-        radial-gradient(1000px 900px at 120% 15%, rgba(99,102,241,.10), transparent 45%),
+        radial-gradient(900px 600px at 0% -10%, rgba(20,184,166,.18), transparent 45%),
+        radial-gradient(900px 600px at 120% 0%, rgba(249,115,22,.16), transparent 45%),
         var(--bg);
       min-height: 100vh;
+      padding-bottom: calc(84px + env(safe-area-inset-bottom, 0px)); /* room for bottom nav */
     }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 18px 12px 56px; }
 
+    .wrap { max-width: 900px; margin: 0 auto; padding: 14px 12px 80px; }
+
+    /* Top header */
     header{
       position: sticky; top: 0; z-index: 30;
-      background: color-mix(in srgb, var(--bg) 92%, transparent);
-      backdrop-filter: blur(6px);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(8px);
       display:flex; align-items:center; justify-content:space-between; gap:12px;
       padding: 10px 0 12px; border-bottom: 1px solid var(--border);
     }
     .brand { display:flex; align-items:center; gap:10px; }
-    .logo{
-      width:32px; height:32px; border-radius:10px; display:grid; place-items:center;
-      background: linear-gradient(135deg,#111,#333); color:#fff; font-weight:700; box-shadow: var(--shadow);
+    .avatar{
+      width:36px; height:36px; border-radius:50%; display:grid; place-items:center;
+      background: linear-gradient(135deg, var(--accent), #22c55e); color: var(--accent-fg);
+      font-weight:800; box-shadow: var(--shadow); letter-spacing:.5px;
     }
     h1{ font-size: 18px; margin:0; letter-spacing:.2px; }
     .who{ font-size: 13px; color: var(--muted); white-space: nowrap; }
     .who a{ color: inherit; }
 
-    .tabs{ display:flex; gap:8px; margin: 12px 0 16px; overflow-x:auto; }
-    .tab{
-      flex: 0 0 auto;
-      text-decoration:none; color: var(--fg);
-      border:1px solid var(--border); padding:10px 14px; border-radius: 999px; font-size: 14px;
-      background: var(--card);
-      min-height: 44px;
-    }
-    .tab.active{ background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
-
+    /* Cards & common */
     .grid{ display:grid; gap:14px; }
     .card{
-      background: var(--card); border:1px solid var(--border); border-radius: 16px; padding: 16px; box-shadow: var(--shadow);
+      background: var(--card); border:1px solid color-mix(in srgb, var(--border) 60%, transparent);
+      border-radius: 18px; padding: 16px; box-shadow: var(--shadow);
     }
     .kicker{ text-transform: uppercase; letter-spacing:.12em; font-size:11px; color: var(--muted); }
     .muted{ color: var(--muted); font-size: 13px; }
@@ -152,48 +160,63 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
 
     a.button, button, input[type=submit]{
       appearance: none; border: 1px solid transparent; text-decoration:none; cursor:pointer;
-      padding: 12px 14px; border-radius: 12px; font-weight: 600;
+      padding: 12px 14px; border-radius: 12px; font-weight: 700;
       background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow);
       min-height: 44px;
     }
-    .secondary{ background: transparent; color: var(--fg); border-color: var(--border); }
+    .secondary{ background: transparent; color: var(--fg); border-color: color-mix(in srgb, var(--border) 70%, transparent); }
 
     form{ display:grid; gap: 12px; }
-    label{ font-weight: 600; font-size: 13px; }
+    label{ font-weight: 700; font-size: 13px; }
     input, textarea, select{
-      width:100%; padding: 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px; outline: none;
+      width:100%; padding: 12px; border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+      border-radius: 12px; font-size: 14px; outline: none;
       min-height: 44px;
     }
     textarea{ resize: vertical; min-height: 88px; }
 
     ul{ list-style:none; margin:0; padding:0; display:grid; gap:10px; }
-    li.app{ border:1px solid var(--border); border-radius:14px; padding:14px; background: var(--bg); }
+    li.app{
+      border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+      border-radius:14px; padding:14px; background: var(--card);
+      position: relative;
+    }
+    /* Colored side bar for status */
+    li.app[data-status="stone"]::before,
+    li.app[data-status="pencil"]::before{
+      content:''; position:absolute; left:0; top:0; bottom:0; width:6px; border-radius:14px 0 0 14px;
+      background: var(--pencil);
+    }
+    li.app[data-status="stone"]::before{ background: var(--stone); }
 
-    .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px; color: var(--muted); background: color-mix(in srgb, var(--card) 80%, transparent); }
+    .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid color-mix(in srgb, var(--border) 70%, transparent); font-size:12px; color: var(--muted); background: color-mix(in srgb, var(--card) 85%, transparent); }
     .pill .dot{ width:8px; height:8px; border-radius:999px; display:inline-block; }
 
-    .creator{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; font-size:12px; color:#fff; }
-    .creator.adam{ background: var(--adam); }
-    .creator.kuljit{ background: var(--kuljit); }
+    .creator{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; font-size:12px; color:#061013; background: #c7f9ff; }
+    .creator.adam{ background: color-mix(in srgb, var(--adam) 25%, #c7f9ff); }
+    .creator.kuljit{ background: color-mix(in srgb, var(--kuljit) 25%, #ffe9cf); }
 
     .inline-actions{ display:flex; gap:8px; align-items:center; }
-    .danger { background: transparent; color: var(--fg); border-color: var(--border); }
+    .danger { background: transparent; color: var(--fg); border-color: color-mix(in srgb, var(--border) 70%, transparent); }
 
     /* Calendar */
     .cal-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
-    .cal-title{ font-weight:700; font-size:16px; }
+    .cal-title{ font-weight:800; font-size:18px; }
     .cal-nav{ display:flex; gap:8px; }
     .cal-row{ display:grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; }
-    .cal-dow{ text-align:center; font-size:12px; color: var(--muted); font-weight: 700; padding: 6px 0; }
+    .cal-dow{ text-align:center; font-size:12px; color: var(--muted); font-weight: 800; padding: 6px 0; }
     .cal-grid{ display:grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
     .cal-cell{
       display:flex; flex-direction: column; align-items:flex-start; justify-content:flex-start;
-      border:1px solid var(--border); border-radius:12px; padding:8px; min-height:66px; background: var(--card);
-      color: var(--fg);
+      border:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+      border-radius:12px; padding:8px; min-height:68px; background: var(--card); color: var(--fg);
+      transition: transform .05s ease-in-out;
     }
-    .cal-daynum{ font-size:14px; font-weight:800; line-height:1; color: var(--fg); }
+    .cal-cell:active{ transform: scale(.98); }
+    .cal-daynum{ font-size:15px; font-weight:900; line-height:1; color: var(--fg); }
     .cal-out .cal-daynum{ opacity:.58; }
-    .cal-today{ outline: 2px solid color-mix(in srgb, var(--stone) 70%, transparent); border-radius:10px; }
+    .cal-weekend{ background: color-mix(in srgb, var(--card) 92%, var(--border) 8%); }
+    .cal-today{ outline: 2px solid color-mix(in srgb, var(--accent) 75%, transparent); border-radius:10px; }
     .cal-dots{ display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
     .cal-dot{ width:9px; height:9px; border-radius:999px; outline:1px solid color-mix(in srgb, black 8%, transparent); }
 
@@ -202,7 +225,24 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
     .legend .pill.solid{ border-style:solid; }
 
     .day-details{ margin-top: 12px; }
-    .empty{ border:1px dashed var(--border); border-radius: 14px; padding: 16px; text-align:center; color: var(--muted); }
+    .empty{ border:1px dashed color-mix(in srgb, var(--border) 80%, transparent); border-radius: 14px; padding: 16px; text-align:center; color: var(--muted); }
+
+    /* Bottom Navigation */
+    .bottom-nav{
+      position: fixed; z-index: 50; bottom: 0; left: 0; right: 0;
+      background: var(--card); border-top:1px solid color-mix(in srgb, var(--border) 70%, transparent);
+      display:flex; justify-content: space-around; align-items: center; gap: 6px;
+      padding: 8px max(10px, env(safe-area-inset-left,0px)) calc(8px + env(safe-area-inset-bottom,0px)) max(10px, env(safe-area-inset-right,0px));
+      box-shadow: 0 -8px 22px rgba(0,0,0,.06);
+    }
+    .bn-item{
+      flex:1 1 0; min-width:0; text-decoration:none; color: var(--muted);
+      display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+      padding:8px 6px; border-radius:12px; font-size:12px; text-align:center;
+    }
+    .bn-item.active{ color: var(--accent); background: color-mix(in srgb, var(--accent) 10%, transparent); font-weight:800; }
+    .bn-emoji{ font-size: 18px; line-height:1; }
+
   </style>
   ${extraHead}
 </head>
@@ -210,15 +250,22 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
   <div class="wrap">
     <header>
       <div class="brand">
-        <div class="logo">AT</div>
+        <div class="avatar" title="AdjitTime">${initials}</div>
         <h1>AdjitTime</h1>
       </div>
       <div class="who">
         ${user ? `Logged in as <strong>${escapeHTML(user.fullName)}</strong> · <a href="/logout">Logout</a>` : `Not logged in`}
       </div>
     </header>
+
     ${body}
-    <div class="muted" style="margin-top:18px; text-align:center;">© ${new Date().getFullYear()} AdjitTime</div>
+
+    <nav class="bottom-nav" aria-label="Primary">
+      ${nav('calendar','Calendar','📅')}
+      ${nav('mine',"Agenda",'📋')}
+      ${nav('request','Create','➕')}
+      ${nav('criticism','Criticism','💬')}
+    </nav>
   </div>
   ${afterBody}
 </body>
@@ -233,7 +280,7 @@ app.get('/login', (_req, res) => {
     <div class="grid">
       <div class="card">
         <div class="kicker">Access</div>
-        <h2>Login</h2>
+        <h2 style="margin:6px 0 12px 0;">Log in</h2>
         <form method="POST" action="/login">
           <div>
             <label for="fullName">Full Name</label>
@@ -245,12 +292,12 @@ app.get('/login', (_req, res) => {
             <input id="dob" name="dob" type="date" required />
             <div class="muted">Format: YYYY-MM-DD</div>
           </div>
-          <input type="submit" value="Log in" />
+          <input type="submit" value="Enter" />
         </form>
       </div>
     </div>
   `;
-  res.send(layoutHTML('Login', body, null));
+  res.send(layoutHTML('Login', body, null, 'calendar'));
 });
 
 app.post('/login', (req, res) => {
@@ -267,10 +314,10 @@ app.post('/login', (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('Login failed', body, null));
+    return res.send(layoutHTML('Login failed', body, null, 'calendar'));
   }
   res.cookie('adjit_user', user.slug, { httpOnly: true, sameSite: 'lax', maxAge: 7*24*60*60*1000 });
-  res.redirect('/dashboard');
+  res.redirect('/dashboard?tab=calendar');
 });
 
 app.get('/logout', (req, res) => {
@@ -280,15 +327,9 @@ app.get('/logout', (req, res) => {
 
 app.get('/dashboard', requireLogin, (req, res) => {
   const user = req.user;
-  const tab = (req.query.tab === 'calendar')
-    ? 'calendar'
-    : (req.query.tab === 'request')
-      ? 'request'
-      : (req.query.tab === 'criticism')
-        ? 'criticism'
-        : 'mine';
+  const tab = (['calendar','mine','request','criticism'].includes(req.query.tab)) ? req.query.tab : 'calendar';
 
-  // ----- Calendar section -----
+  // ----- Calendar -----
   const calendarSection = `
     <div class="card">
       <div class="cal-header">
@@ -309,7 +350,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // ----- Agenda section -----
+  // ----- Agenda -----
   let listHTML = '';
   if (APPOINTMENTS.length === 0) {
     listHTML = `<div class="empty">No appointments yet. Create one in “Formal request for possession”.</div>`;
@@ -326,7 +367,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
       const showDelete = appt.createdBySlug === user.slug;
 
       listHTML += `
-        <li class="app">
+        <li class="app" data-status="${appt.status}">
           <div class="inline-actions" style="justify-content: space-between;">
             <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <strong>${escapeHTML(appt.title)}</strong>
@@ -347,13 +388,13 @@ app.get('/dashboard', requireLogin, (req, res) => {
     }
     listHTML += '</ul>';
   }
-  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're mine bitch</h2>${listHTML}</div>`;
+  const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2 style="margin:6px 0 12px 0;">You're mine bitch</h2>${listHTML}</div>`;
 
-  // ----- Create section -----
+  // ----- Create -----
   const formSection = `
     <div class="card">
       <div class="kicker">Create</div>
-      <h2>Formal request for possession</h2>
+      <h2 style="margin:6px 0 12px 0;">Formal request for possession</h2>
       <form method="POST" action="/appointments/create">
         <div>
           <label for="title">Title</label>
@@ -384,10 +425,10 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // ----- Criticism (notes) section -----
+  // ----- Criticism -----
   let notesHTML = '';
   if (NOTES.length === 0) {
-    notesHTML = `<div class="empty">No notes yet. Add your ideas, complaints, or wild feature requests below.</div>`;
+    notesHTML = `<div class="empty">No notes yet. Add your ideas, rants, or feature requests below.</div>`;
   } else {
     const orderedNotes = [...NOTES].sort((a,b) => b.id - a.id);
     notesHTML = '<ul>';
@@ -396,7 +437,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
       const whoChip = whoUser ? `<span class="creator ${whoUser.slug}">${whoUser.fullName}</span>` : '';
       const canEdit = n.createdBySlug === user.slug;
       notesHTML += `
-        <li class="app">
+        <li class="app" data-status="pencil">
           <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap; justify-content:space-between;">
             <div style="display:flex; align-items:center; gap:8px; flex-wrap:wrap;">
               <strong>Note</strong> ${whoChip}
@@ -424,7 +465,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const criticismSection = `
     <div class="card">
       <div class="kicker">Feedback</div>
-      <h2>I can deal with criticism</h2>
+      <h2 style="margin:6px 0 12px 0;">I can deal with criticism</h2>
       <form method="POST" action="/feedback/create">
         <div>
           <label for="content">Add a note</label>
@@ -439,18 +480,8 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // ----- Tabs -----
-  const tabsHTML = `
-    <div class="tabs">
-      <a class="tab ${tab === 'calendar' ? 'active' : ''}" href="/dashboard?tab=calendar">Calendar</a>
-      <a class="tab ${tab === 'mine' ? 'active' : ''}" href="/dashboard?tab=mine">You're mine bitch</a>
-      <a class="tab ${tab === 'request' ? 'active' : ''}" href="/dashboard?tab=request">Formal request for possession</a>
-      <a class="tab ${tab === 'criticism' ? 'active' : ''}" href="/dashboard?tab=criticism">I can deal with criticism</a>
-    </div>
-  `;
-
+  // Content (no top tabs; bottom nav controls views)
   const content = `
-    ${tabsHTML}
     <div class="grid">
       ${
         tab === 'calendar'
@@ -464,7 +495,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // embed data for client calendar
+  // Embed data for client calendar
   const safeAppts = JSON.stringify(APPOINTMENTS).replace(/</g, '\\u003c');
   const safeUsers = JSON.stringify(USERS).replace(/</g, '\\u003c');
   const safeMe = JSON.stringify(user.slug);
@@ -476,7 +507,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const USERS = ${safeUsers};
   const ME = ${safeMe};
 
-  // Only run calendar logic on the calendar tab
+  // Only run calendar logic on the calendar view
   const grid = document.getElementById('calGrid');
   if (!grid) return;
 
@@ -489,17 +520,17 @@ app.get('/dashboard', requireLogin, (req, res) => {
 
   // Build DOW header (Mon-Sun)
   const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
-  DOW.forEach(d => {
+  DOW.forEach((d,i) => {
     const el = document.createElement('div');
     el.className = 'cal-dow';
     el.textContent = d;
-    document.getElementById('dowRow').appendChild(el);
+    dowRow.appendChild(el);
   });
 
   const fmtDayKey = (d) => {
     const y = d.getFullYear();
     const m = (d.getMonth()+1).toString().padStart(2,'0');
-       const day = d.getDate().toString().padStart(2,'0');
+    const day = d.getDate().toString().padStart(2,'0');
     return \`\${y}-\${m}-\${day}\`;
   };
   const sameDay = (a,b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
@@ -545,11 +576,14 @@ app.get('/dashboard', requireLogin, (req, res) => {
     const today = new Date();
     const cells = buildMatrix(viewDate);
 
-    cells.forEach(d => {
+    cells.forEach((d, idx) => {
       const cell = document.createElement('button');
       cell.type = 'button';
       cell.className = 'cal-cell';
       if (d.getMonth() !== month) cell.classList.add('cal-out');
+      // weekend shade
+      const dow = (d.getDay() === 0 ? 7 : d.getDay()); // 1-7 Mon-Sun
+      if (dow >= 6) cell.classList.add('cal-weekend');
       if (sameDay(d, today)) cell.classList.add('cal-today');
 
       const num = document.createElement('div');
@@ -572,6 +606,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
         dot.style.background = color;
         dotsWrap.appendChild(dot);
       };
+      // Up to 3 dots, preferring stone
       stones.slice(0,3).forEach(()=>addDot('var(--stone)'));
       if (stones.length < 3) {
         pencils.slice(0, 3 - stones.length).forEach(()=>addDot('var(--pencil)'));
@@ -592,7 +627,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     const container = dayDetails;
     container.innerHTML = '';
     const h = document.createElement('div'); h.className='kicker'; h.textContent='Day';
-    const t = document.createElement('h2'); t.style.margin='4px 0 10px 0';
+    const t = document.createElement('h2'); t.style.margin='6px 0 10px 0';
     t.textContent = date.toLocaleDateString(undefined,{ weekday:'long', year:'numeric', month:'long', day:'numeric' });
     container.appendChild(h); container.appendChild(t);
 
@@ -602,7 +637,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
 
     const ul = document.createElement('ul');
     items.slice().sort(byStart).forEach(appt => {
-      const li = document.createElement('li'); li.className='app';
+      const li = document.createElement('li'); li.className='app'; li.dataset.status = appt.status;
 
       const whoUser = USERS.find(u=>u.slug===appt.createdBySlug);
       const whoChip = document.createElement('span');
@@ -646,6 +681,22 @@ app.get('/dashboard', requireLogin, (req, res) => {
     container.appendChild(ul);
   }
 
+  // Basic swipe for month change (mobile)
+  (() => {
+    let startX = null;
+    grid.addEventListener('touchstart', e => { startX = e.touches[0].clientX; }, {passive:true});
+    grid.addEventListener('touchend', e => {
+      if (startX === null) return;
+      const dx = e.changedTouches[0].clientX - startX;
+      if (Math.abs(dx) > 60) {
+        if (dx < 0) viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()+1, 1);
+        else viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()-1, 1);
+        render();
+      }
+      startX = null;
+    }, {passive:true});
+  })();
+
   document.getElementById('prevBtn').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()-1, 1); render(); });
   document.getElementById('nextBtn').addEventListener('click', ()=>{ viewDate = new Date(viewDate.getFullYear(), viewDate.getMonth()+1, 1); render(); });
   document.getElementById('todayBtn').addEventListener('click', ()=>{ viewDate = new Date(); render(); });
@@ -655,7 +706,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
 </script>
   `;
 
-  res.send(layoutHTML('Dashboard', content, user, '', afterBody));
+  res.send(layoutHTML('Dashboard', content, user, tab, '', afterBody));
 });
 
 // ---- Create appointment ----
@@ -677,7 +728,7 @@ app.post('/appointments/create', requireLogin, (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('Error', body, user));
+    return res.send(layoutHTML('Error', body, user, 'request'));
   }
 
   const startDate = new Date(startAtRaw);
@@ -726,7 +777,7 @@ app.post('/feedback/create', requireLogin, (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('Error', body, user));
+    return res.send(layoutHTML('Error', body, user, 'criticism'));
   }
 
   NOTES.push({
@@ -754,7 +805,7 @@ app.get('/feedback/edit/:id', requireLogin, (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('Note not found', body, user));
+    return res.send(layoutHTML('Note not found', body, user, 'criticism'));
   }
   if (note.createdBySlug !== user.slug) {
     const body = `
@@ -766,7 +817,7 @@ app.get('/feedback/edit/:id', requireLogin, (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('No permission', body, user));
+    return res.send(layoutHTML('No permission', body, user, 'criticism'));
   }
 
   const whoUser = USERS.find(u => u.slug === note.createdBySlug);
@@ -774,7 +825,7 @@ app.get('/feedback/edit/:id', requireLogin, (req, res) => {
     <div class="grid">
       <div class="card">
         <div class="kicker">Edit</div>
-        <h2>Edit note</h2>
+        <h2 style="margin:6px 0 12px 0;">Edit note</h2>
         <p class="muted" style="margin-top:-4px">Created by ${whoUser ? escapeHTML(whoUser.fullName) : escapeHTML(note.createdBySlug)} · ${toHumanLocal(note.createdAtISO)}</p>
         <form method="POST" action="/feedback/edit/${note.id}">
           <div>
@@ -789,7 +840,7 @@ app.get('/feedback/edit/:id', requireLogin, (req, res) => {
       </div>
     </div>
   `;
-  res.send(layoutHTML('Edit note', body, user));
+  res.send(layoutHTML('Edit note', body, user, 'criticism'));
 });
 
 // ---- Edit feedback note (submit) ----
@@ -811,11 +862,10 @@ app.post('/feedback/edit/:id', requireLogin, (req, res) => {
         </div>
       </div>
     `;
-    return res.send(layoutHTML('Error', body, user));
+    return res.send(layoutHTML('Error', body, user, 'criticism'));
   }
 
-  note.content = content; // stored raw; escaped on render
-  // (Optional) could track updatedAtISO if you want
+  note.content = content; // raw; escaped on render
   res.redirect('/dashboard?tab=criticism');
 });
 
@@ -834,5 +884,5 @@ app.post('/feedback/delete', requireLogin, (req, res) => {
 
 // ---- Start ----
 app.listen(PORT, () => {
-  console.log(`✅ AdjitTime running at http://localhost:${PORT}`);
+  console.log(`✅ AdjitTime (redesign) running at http://localhost:${PORT}`);
 });
