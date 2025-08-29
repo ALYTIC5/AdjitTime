@@ -1,11 +1,13 @@
-// AdjitTime — Pretty MVP (Express + cookie, no DB)
-// - Login via Name + DOB (prefillable via URL query)
+// AdjitTime — Full-name login only (Express + cookie, no DB)
+// - Root redirects to /login (no pre-login content)
+// - Login requires Full Name + DOB
+//   * Full name must be "Adam Kiernan" or "Kuljit Dhami" (case/spacing-insensitive)
+//   * DOB must be exact: Adam 2001-02-11, Kuljit 1994-12-09
 // - Cookie session (7 days)
-// - Two tabs on /dashboard:
-//    * "You're mine bitch"  (lists all appointments, newest first, can delete)
-//    * "Formal request for possession" (create appointment; duration defaults to 60)
-// - Anyone (Adam or Kuljit) can create and delete; items update instantly
-// - Minimal, modern UI with inline CSS (no extra UI libs)
+// - Dashboard with two tabs:
+//    * "You're mine bitch"  (list + delete)
+//    * "Formal request for possession" (create; duration default 60)
+// - Minimal, modern UI with inline CSS
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -17,10 +19,10 @@ const PORT = process.env.PORT || 3000;
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// --------- "Data" (in-memory) ----------
+// --------- Users (hardcoded) ----------
 const USERS = [
-  { id: 1, name: 'Adam', slug: 'adam', dob: '2001-02-11' },
-  { id: 2, name: 'Kuljit', slug: 'kuljit', dob: '1994-12-09' },
+  { id: 1, fullName: 'Adam Kiernan', slug: 'adam', dob: '2001-02-11' },
+  { id: 2, fullName: 'Kuljit Dhami', slug: 'kuljit', dob: '1994-12-09' },
 ];
 
 // appointment: { id, title, startAtISO, durationMins, note, createdBySlug, createdAtISO }
@@ -48,6 +50,11 @@ function escapeHTML(str) {
     .replaceAll('>', '&gt;')
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
+}
+
+function normalizeName(s) {
+  // Lowercase, collapse internal whitespace to single spaces, trim ends
+  return String(s).toLowerCase().replace(/\s+/g, ' ').trim();
 }
 
 function layoutHTML(title, body, user = null) {
@@ -121,7 +128,6 @@ function layoutHTML(title, body, user = null) {
     .kicker{ text-transform: uppercase; letter-spacing:.12em; font-size:11px; color: var(--muted); }
     .empty{ border:1px dashed var(--border); border-radius: 14px; padding: 16px; text-align:center; color: var(--muted); }
     .footer{ margin-top: 24px; text-align:center; color: var(--muted); font-size:12px; }
-    code{ background: rgba(125,125,125,.12); padding:2px 6px; border-radius:6px; }
     .inline-actions{ display:flex; gap:8px; align-items:center; }
     .danger { border:1px solid var(--border); background: transparent; }
   </style>
@@ -134,7 +140,7 @@ function layoutHTML(title, body, user = null) {
         <h1>AdjitTime</h1>
       </div>
       <div class="who">
-        ${user ? `Logged in as <strong>${escapeHTML(user.name)}</strong> · <a href="/logout">Logout</a>` : `Not logged in`}
+        ${user ? `Logged in as <strong>${escapeHTML(user.fullName)}</strong> · <a href="/logout">Logout</a>` : `Not logged in`}
       </div>
     </header>
     ${body}
@@ -146,32 +152,11 @@ function layoutHTML(title, body, user = null) {
 
 // --------- Routes ----------
 
-// Home — quick links to prefill login
-app.get('/', (req, res) => {
-  const user = getUserFromCookie(req);
-  const body = `
-    <div class="grid">
-      <div class="card">
-        <div class="split">
-          <h2>Welcome</h2>
-          <span class="pill">MVP</span>
-        </div>
-        <p class="muted">Send a login link that pre-fills the form, or just go to the login page.</p>
-        <div class="row">
-          <a class="button secondary" href="/login?name=Adam&dob=2001-02-11">Prefill for Adam</a>
-          <a class="button secondary" href="/login?name=Kuljit&dob=1994-12-09">Prefill for Kuljit</a>
-          <a class="button" href="/login">Go to Login</a>
-          ${user ? `<a class="button" href="/dashboard">Open Dashboard</a>` : ``}
-        </div>
-      </div>
-    </div>
-  `;
-  res.send(layoutHTML('Home', body, user));
-});
+// Root: no pre-login content, just go to /login
+app.get('/', (_req, res) => res.redirect('/login'));
 
-// Login form
-app.get('/login', (req, res) => {
-  const { name = '', dob = '' } = req.query;
+// Login form (no prefill)
+app.get('/login', (_req, res) => {
   const body = `
     <div class="grid">
       <div class="card">
@@ -179,30 +164,30 @@ app.get('/login', (req, res) => {
         <h2>Login</h2>
         <form method="POST" action="/login">
           <div>
-            <label for="name">Name</label>
-            <input id="name" name="name" value="${escapeHTML(String(name))}" placeholder="Adam or Kuljit" required />
+            <label for="fullName">Full Name</label>
+            <input id="fullName" name="fullName" placeholder="Adam Kiernan or Kuljit Dhami" required />
+            <div class="muted">Case doesn’t matter. Use full name.</div>
           </div>
           <div>
             <label for="dob">Date of Birth</label>
-            <input id="dob" name="dob" type="date" value="${escapeHTML(String(dob))}" required />
+            <input id="dob" name="dob" type="date" required />
             <div class="muted">Format: YYYY-MM-DD</div>
           </div>
           <input type="submit" value="Log in" />
         </form>
-        <p class="muted" style="margin-top:10px">Tip: share a link like <code>/login?name=Kuljit&dob=1994-12-09</code> to prefill.</p>
       </div>
     </div>
   `;
   res.send(layoutHTML('Login', body, null));
 });
 
-// Login handler — verify against hardcoded users and set cookie
+// Login handler — verify full name + dob
 app.post('/login', (req, res) => {
-  const rawName = (req.body.name || '').trim();
+  const rawFull = normalizeName(req.body.fullName || '');
   const rawDob = (req.body.dob || '').trim();
 
   const user = USERS.find(
-    (u) => u.name.toLowerCase() === rawName.toLowerCase() && u.dob === rawDob
+    (u) => normalizeName(u.fullName) === rawFull && u.dob === rawDob
   );
 
   if (!user) {
@@ -210,7 +195,7 @@ app.post('/login', (req, res) => {
       <div class="grid">
         <div class="card">
           <h2>Login failed</h2>
-          <p class="muted">Check name and date of birth.</p>
+          <p class="muted">Make sure you entered your full name and exact date of birth.</p>
           <a class="button secondary" href="/login">Try again</a>
         </div>
       </div>
@@ -221,7 +206,7 @@ app.post('/login', (req, res) => {
   res.cookie('adjit_user', user.slug, {
     httpOnly: true,
     sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
+    maxAge: 7 * 24 * 60 * 60 * 1000,
   });
 
   res.redirect('/dashboard');
@@ -230,7 +215,7 @@ app.post('/login', (req, res) => {
 // Logout
 app.get('/logout', (req, res) => {
   res.clearCookie('adjit_user');
-  res.redirect('/');
+  res.redirect('/login');
 });
 
 // Dashboard with tabs
@@ -246,7 +231,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     const ordered = [...APPOINTMENTS].sort((a, b) => b.id - a.id);
     listHTML = '<ul>';
     for (const appt of ordered) {
-      const who = USERS.find((u) => u.slug === appt.createdBySlug)?.name || appt.createdBySlug;
+      const who = USERS.find((u) => u.slug === appt.createdBySlug)?.fullName || appt.createdBySlug;
       const human = toHumanLocal(appt.startAtISO);
       listHTML += `
         <li class="app">
@@ -355,15 +340,12 @@ app.post('/appointments/create', requireLogin, (req, res) => {
   res.redirect('/dashboard?tab=mine');
 });
 
-// Delete appointment (any logged-in user)
+// Delete appointment
 app.post('/appointments/delete', requireLogin, (req, res) => {
-  const idRaw = (req.body.id || '').trim();
-  const id = parseInt(idRaw, 10);
-  if (!Number.isInteger(id)) {
-    return res.redirect('/dashboard?tab=mine');
+  const id = parseInt((req.body.id || '').trim(), 10);
+  if (Number.isInteger(id)) {
+    APPOINTMENTS = APPOINTMENTS.filter(a => a.id !== id);
   }
-  // Remove by id
-  APPOINTMENTS = APPOINTMENTS.filter(a => a.id !== id);
   res.redirect('/dashboard?tab=mine');
 });
 
