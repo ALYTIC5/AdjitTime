@@ -1,10 +1,9 @@
-// AdjitTime — Mobile Calendar + Pretty UI (Express + cookie, in-memory)
-// - Root -> /login (full-name + DOB)
-// - Cookie session (7 days)
-// - Tabs: Calendar (read-only), "You're mine bitch" (agenda + delete), "Formal request for possession" (create; default 60; choose status)
-// - Status: "set in stone" (stone) vs "set in pencil" (pencil) with clear color-coding
-// - Show creator on every appointment
-// - Fully in-memory (resets on restart)
+// AdjitTime — Mobile Calendar (improved UX + palette) + Creator-only delete
+// - Full-name + DOB login -> cookie
+// - Tabs: Calendar (read-only), "You're mine bitch" (agenda), "Formal request for possession" (create)
+// - Status: "stone" (set in stone) vs "pencil" (set in pencil) with dots/colors
+// - Creator shown on items; only creator sees delete button; server double-checks
+// - In-memory data (resets on restart)
 
 const express = require('express');
 const cookieParser = require('cookie-parser');
@@ -12,37 +11,31 @@ const cookieParser = require('cookie-parser');
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --------- Middleware ----------
 app.use(express.urlencoded({ extended: true }));
 app.use(cookieParser());
 
-// --------- Users (hardcoded) ----------
+// ---- Users (hardcoded) ----
 const USERS = [
   { id: 1, fullName: 'Adam Kiernan', slug: 'adam', dob: '2001-02-11' },
   { id: 2, fullName: 'Kuljit Dhami', slug: 'kuljit', dob: '1994-12-09' },
 ];
 
-// appointment: {
-//   id, title, startAtISO, durationMins, note, status: 'stone'|'pencil',
-//   createdBySlug, createdAtISO
-// }
+// appointment: { id, title, startAtISO, durationMins, status: 'stone'|'pencil', note, createdBySlug, createdAtISO }
 let APPOINTMENTS = [];
 let nextId = 1;
 
-// --------- Helpers ----------
+// ---- Helpers ----
 function getUserFromCookie(req) {
   const slug = req.cookies?.adjit_user;
   if (!slug) return null;
-  return USERS.find((u) => u.slug === slug) || null;
+  return USERS.find(u => u.slug === slug) || null;
 }
-
 function requireLogin(req, res, next) {
   const user = getUserFromCookie(req);
   if (!user) return res.redirect('/login');
   req.user = user;
   next();
 }
-
 function escapeHTML(str) {
   return String(str)
     .replaceAll('&', '&amp;')
@@ -51,30 +44,20 @@ function escapeHTML(str) {
     .replaceAll('"', '&quot;')
     .replaceAll("'", '&#39;');
 }
-
 function normalizeName(s) {
-  // Lowercase, collapse whitespace, trim
   return String(s).toLowerCase().replace(/\s+/g, ' ').trim();
 }
-
 function toHumanLocal(iso) {
   try {
     const d = new Date(iso);
     if (isNaN(d.getTime())) return iso;
     return d.toLocaleString(undefined, {
-      weekday: 'short',
-      year: 'numeric',
-      month: 'short',
-      day: '2-digit',
-      hour: '2-digit',
-      minute: '2-digit'
+      weekday: 'short', year: 'numeric', month: 'short', day: '2-digit',
+      hour: '2-digit', minute: '2-digit'
     });
-  } catch {
-    return iso;
-  }
+  } catch { return iso; }
 }
 
-// --------- Layout ----------
 function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
   return `<!doctype html>
 <html lang="en">
@@ -85,33 +68,36 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
   <meta name="color-scheme" content="light dark" />
   <style>
     :root{
-      --bg: #ffffff;
-      --fg: #0f1115;
-      --muted: #6b7280;
-      --border: #e5e7eb;
-      --card: #fbfbfb;
-      --accent: #111111;
+      /* Pleasant, inviting palette with strong text contrast */
+      --bg: #faf9ff;         /* soft lilac-tinted background */
+      --fg: #0b0b0c;         /* near-black text */
+      --muted: #6b7280;      /* slate */
+      --border: #e6e6f0;
+      --card: #ffffff;
+      --accent: #6d28d9;     /* violet-700 */
       --accent-fg: #ffffff;
       --shadow: 0 10px 25px rgba(0,0,0,.06);
 
-      --stone: #2563eb;      /* blue - set in stone */
-      --pencil: #9ca3af;     /* gray - set in pencil */
+      /* Status colors */
+      --stone: #2563eb;      /* blue for "set in stone" */
+      --pencil: #9ca3af;     /* gray for "set in pencil" */
 
-      --adam: #8b5cf6;       /* subtle creator dot accent (optional) */
-      --kuljit: #f59e0b;
+      /* Creator badges */
+      --adam: #8b5cf6;       /* violet */
+      --kuljit: #f59e0b;     /* amber */
     }
     @media (prefers-color-scheme: dark) {
       :root{
-        --bg: #0b0b0c;
+        --bg: #0c0c12;
         --fg: #f3f4f6;
         --muted: #a1a1aa;
-        --border: #1f2937;
-        --card: #111214;
-        --accent: #f3f4f6;
+        --border: #1f2330;
+        --card: #0f1117;
+        --accent: #a78bfa;   /* lighter violet */
         --accent-fg: #0b0b0c;
         --shadow: 0 10px 25px rgba(0,0,0,.35);
       }
-      input, textarea, select { background: #0f1115; color: var(--fg); }
+      input, textarea, select { background: #0f1117; color: var(--fg); }
     }
 
     * { box-sizing: border-box; }
@@ -119,25 +105,25 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
     body{
       font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji", "Segoe UI Emoji";
       color: var(--fg);
-      background: radial-gradient(1200px 1200px at 10% -10%, rgba(99,102,241,.08), transparent 40%),
-                  radial-gradient(900px 900px at 120% 10%, rgba(236,72,153,.08), transparent 40%),
-                  var(--bg);
+      background:
+        radial-gradient(1100px 700px at 10% -10%, rgba(109,40,217,.10), transparent 40%),
+        radial-gradient(1000px 900px at 120% 15%, rgba(99,102,241,.10), transparent 45%),
+        var(--bg);
       min-height: 100vh;
     }
-    .wrap { max-width: 900px; margin: 0 auto; padding: 22px 14px 60px; }
+    .wrap { max-width: 900px; margin: 0 auto; padding: 18px 12px 56px; }
 
     header{
       position: sticky; top: 0; z-index: 30;
       background: color-mix(in srgb, var(--bg) 92%, transparent);
       backdrop-filter: blur(6px);
-      display:flex; align-items:center; justify-content:space-between;
-      gap:12px; padding: 10px 0 12px; border-bottom: 1px solid var(--border);
+      display:flex; align-items:center; justify-content:space-between; gap:12px;
+      padding: 10px 0 12px; border-bottom: 1px solid var(--border);
     }
     .brand { display:flex; align-items:center; gap:10px; }
     .logo{
       width:32px; height:32px; border-radius:10px; display:grid; place-items:center;
-      background: linear-gradient(135deg,#111,#333);
-      color:#fff; font-weight:700; box-shadow: var(--shadow);
+      background: linear-gradient(135deg,#111,#333); color:#fff; font-weight:700; box-shadow: var(--shadow);
     }
     h1{ font-size: 18px; margin:0; letter-spacing:.2px; }
     .who{ font-size: 13px; color: var(--muted); white-space: nowrap; }
@@ -147,8 +133,9 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
     .tab{
       flex: 0 0 auto;
       text-decoration:none; color: var(--fg);
-      border:1px solid var(--border); padding:8px 12px; border-radius: 999px; font-size: 14px;
+      border:1px solid var(--border); padding:10px 14px; border-radius: 999px; font-size: 14px;
       background: var(--card);
+      min-height: 44px; /* HIG-friendly touch target */
     }
     .tab.active{ background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
 
@@ -159,62 +146,60 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
     .kicker{ text-transform: uppercase; letter-spacing:.12em; font-size:11px; color: var(--muted); }
     .muted{ color: var(--muted); font-size: 13px; }
     .row{ display:flex; flex-wrap:wrap; gap:10px; }
+
     a.button, button, input[type=submit]{
-      appearance: none; border: none; text-decoration:none; cursor:pointer;
-      padding: 10px 14px; border-radius: 12px; font-weight: 600;
+      appearance: none; border: 1px solid transparent; text-decoration:none; cursor:pointer;
+      padding: 12px 14px; border-radius: 12px; font-weight: 600;
       background: var(--accent); color: var(--accent-fg); box-shadow: var(--shadow);
+      min-height: 44px; /* HIG-friendly */
     }
-    .secondary{ background: transparent; color: var(--fg); border:1px solid var(--border); }
+    .secondary{ background: transparent; color: var(--fg); border-color: var(--border); }
 
     form{ display:grid; gap: 12px; }
     label{ font-weight: 600; font-size: 13px; }
     input, textarea, select{
-      width:100%; padding: 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px;
-      outline: none;
+      width:100%; padding: 12px; border:1px solid var(--border); border-radius: 12px; font-size: 14px; outline: none;
+      min-height: 44px; /* better mobile targets */
     }
     textarea{ resize: vertical; min-height: 88px; }
+
     ul{ list-style:none; margin:0; padding:0; display:grid; gap:10px; }
     li.app{ border:1px solid var(--border); border-radius:14px; padding:14px; background: var(--bg); }
-    .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px; color: var(--muted); }
+
+    .pill{ display:inline-flex; align-items:center; gap:6px; padding:4px 8px; border-radius:999px; border:1px solid var(--border); font-size:12px; color: var(--muted); background: color-mix(in srgb, var(--card) 80%, transparent); }
     .pill .dot{ width:8px; height:8px; border-radius:999px; display:inline-block; }
 
+    .creator{ display:inline-flex; align-items:center; gap:6px; padding:3px 8px; border-radius:999px; font-size:12px; color:#fff; }
+    .creator.adam{ background: var(--adam); }
+    .creator.kuljit{ background: var(--kuljit); }
+
     .inline-actions{ display:flex; gap:8px; align-items:center; }
-    .danger { border:1px solid var(--border); background: transparent; }
+    .danger { background: transparent; color: var(--fg); border-color: var(--border); }
 
     /* Calendar */
     .cal-header{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
     .cal-title{ font-weight:700; font-size:16px; }
     .cal-nav{ display:flex; gap:8px; }
-    .cal-grid{
-      display:grid;
-      grid-template-columns: repeat(7, 1fr);
-      gap: 6px;
-      margin-top: 10px;
-    }
-    .cal-dow{ text-align:center; font-size:11px; color: var(--muted); }
+    .cal-row{ display:grid; grid-template-columns: repeat(7, 1fr); gap: 6px; margin-top: 10px; }
+    .cal-dow{ text-align:center; font-size:12px; color: var(--muted); font-weight: 700; padding: 6px 0; }
+    .cal-grid{ display:grid; grid-template-columns: repeat(7, 1fr); gap: 6px; }
     .cal-cell{
-      border:1px solid var(--border); border-radius:12px; padding:8px; min-height:56px; position:relative;
-      background: var(--bg);
+      display:flex; flex-direction: column; align-items:flex-start; justify-content:flex-start;
+      border:1px solid var(--border); border-radius:12px; padding:8px; min-height:66px; background: var(--card);
+      color: var(--fg);
     }
-    .cal-cell.out{ opacity:.45; }
-    .cal-daynum{ font-size:12px; font-weight:700; }
+    .cal-daynum{ font-size:14px; font-weight:800; line-height:1; color: var(--fg); }
+    .cal-out .cal-daynum{ opacity:.58; }  /* only dim the number, not the whole cell */
     .cal-today{ outline: 2px solid color-mix(in srgb, var(--stone) 70%, transparent); border-radius:10px; }
     .cal-dots{ display:flex; gap:4px; margin-top:6px; flex-wrap:wrap; }
-    .cal-dot{
-      width:8px; height:8px; border-radius:999px;
-      outline:1px solid color-mix(in srgb, black 8%, transparent);
-    }
+    .cal-dot{ width:9px; height:9px; border-radius:999px; outline:1px solid color-mix(in srgb, black 8%, transparent); }
+
     .legend{ display:flex; gap:10px; flex-wrap:wrap; margin-top:10px; }
     .legend .pill{ border-style:dashed; }
     .legend .pill.solid{ border-style:solid; }
 
-    /* Day details area under calendar */
-    .day-details{ margin-top: 10px; }
+    .day-details{ margin-top: 12px; }
     .empty{ border:1px dashed var(--border); border-radius: 14px; padding: 16px; text-align:center; color: var(--muted); }
-
-    /* Make tap targets comfortable on iPhone 12 mini */
-    .tab, .button, button, input[type=submit]{ min-height: 40px; }
-    .cal-cell { min-height: 64px; }
   </style>
   ${extraHead}
 </head>
@@ -230,18 +215,16 @@ function layoutHTML(title, body, user = null, extraHead = '', afterBody = '') {
       </div>
     </header>
     ${body}
-    <div class="footer muted" style="margin-top:18px; text-align:center;">© ${new Date().getFullYear()} AdjitTime</div>
+    <div class="muted" style="margin-top:18px; text-align:center;">© ${new Date().getFullYear()} AdjitTime</div>
   </div>
   ${afterBody}
 </body>
 </html>`;
 }
 
-// --------- Routes ----------
-
+// ---- Routes ----
 app.get('/', (_req, res) => res.redirect('/login'));
 
-// Login form
 app.get('/login', (_req, res) => {
   const body = `
     <div class="grid">
@@ -267,15 +250,10 @@ app.get('/login', (_req, res) => {
   res.send(layoutHTML('Login', body, null));
 });
 
-// Login handler
 app.post('/login', (req, res) => {
   const rawFull = normalizeName(req.body.fullName || '');
   const rawDob = (req.body.dob || '').trim();
-
-  const user = USERS.find(
-    (u) => normalizeName(u.fullName) === rawFull && u.dob === rawDob
-  );
-
+  const user = USERS.find(u => normalizeName(u.fullName) === rawFull && u.dob === rawDob);
   if (!user) {
     const body = `
       <div class="grid">
@@ -288,28 +266,20 @@ app.post('/login', (req, res) => {
     `;
     return res.send(layoutHTML('Login failed', body, null));
   }
-
-  res.cookie('adjit_user', user.slug, {
-    httpOnly: true,
-    sameSite: 'lax',
-    maxAge: 7 * 24 * 60 * 60 * 1000,
-  });
-
+  res.cookie('adjit_user', user.slug, { httpOnly: true, sameSite: 'lax', maxAge: 7*24*60*60*1000 });
   res.redirect('/dashboard');
 });
 
-// Logout
 app.get('/logout', (req, res) => {
   res.clearCookie('adjit_user');
   res.redirect('/login');
 });
 
-// Dashboard (Calendar + Agenda + Create)
 app.get('/dashboard', requireLogin, (req, res) => {
   const user = req.user;
-  const tab = req.query.tab === 'request' ? 'request' : (req.query.tab === 'calendar' ? 'calendar' : 'mine');
+  const tab = (req.query.tab === 'calendar') ? 'calendar' : (req.query.tab === 'request' ? 'request' : 'mine');
 
-  // -------- Calendar tab (client-rendered) --------
+  // Calendar section
   const calendarSection = `
     <div class="card">
       <div class="cal-header">
@@ -320,7 +290,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
           <button class="secondary" id="nextBtn" aria-label="Next month">▶</button>
         </div>
       </div>
-      <div class="cal-grid" id="dowRow"></div>
+      <div class="cal-row" id="dowRow"></div>
       <div class="cal-grid" id="calGrid"></div>
       <div class="legend">
         <span class="pill solid"><span class="dot" style="background: var(--stone)"></span> Set in stone</span>
@@ -330,8 +300,7 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // -------- Agenda/List tab --------
-  // Build appointment list (newest first)
+  // Agenda section
   let listHTML = '';
   if (APPOINTMENTS.length === 0) {
     listHTML = `<div class="empty">No appointments yet. Create one in “Formal request for possession”.</div>`;
@@ -339,35 +308,41 @@ app.get('/dashboard', requireLogin, (req, res) => {
     const ordered = [...APPOINTMENTS].sort((a, b) => b.id - a.id);
     listHTML = '<ul>';
     for (const appt of ordered) {
-      const who = USERS.find((u) => u.slug === appt.createdBySlug)?.fullName || appt.createdBySlug;
+      const whoUser = USERS.find(u => u.slug === appt.createdBySlug);
+      const who = whoUser?.fullName || appt.createdBySlug;
+      const whoChip = whoUser ? `<span class="creator ${whoUser.slug}">${whoUser.fullName}</span>` : '';
       const human = toHumanLocal(appt.startAtISO);
       const statusPill = appt.status === 'stone'
         ? `<span class="pill"><span class="dot" style="background: var(--stone)"></span> set in stone</span>`
         : `<span class="pill"><span class="dot" style="background: var(--pencil)"></span> set in pencil</span>`;
+
+      const showDelete = appt.createdBySlug === user.slug; // UI: only creator sees button
+
       listHTML += `
         <li class="app">
           <div class="inline-actions" style="justify-content: space-between;">
-            <div style="display:flex; gap:8px; align-items:center;">
+            <div style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
               <strong>${escapeHTML(appt.title)}</strong>
               ${statusPill}
+              ${whoChip}
             </div>
-            <form method="POST" action="/appointments/delete" onsubmit="return confirm('Delete this appointment?')">
-              <input type="hidden" name="id" value="${appt.id}" />
-              <button class="secondary danger" title="Delete">Delete</button>
-            </form>
+            ${showDelete ? `
+              <form method="POST" action="/appointments/delete" onsubmit="return confirm('Delete this appointment?')">
+                <input type="hidden" name="id" value="${appt.id}" />
+                <button class="secondary danger" title="Delete">Delete</button>
+              </form>` : ``}
           </div>
           <div class="muted" style="margin-top:6px;">When: ${human} · Duration: ${appt.durationMins} mins</div>
           ${appt.note ? `<div style="margin-top:6px">${escapeHTML(appt.note)}</div>` : ``}
-          <div class="muted" style="margin-top:6px">Created by ${escapeHTML(who)} · ${toHumanLocal(appt.createdAtISO)}</div>
+          <div class="muted" style="margin-top:6px">Created at ${toHumanLocal(appt.createdAtISO)}</div>
         </li>
       `;
     }
     listHTML += '</ul>';
   }
-
   const agendaSection = `<div class="card"><div class="kicker">Appointments</div><h2>You're mine bitch</h2>${listHTML}</div>`;
 
-  // -------- Create tab --------
+  // Create section
   const formSection = `
     <div class="card">
       <div class="kicker">Create</div>
@@ -402,7 +377,6 @@ app.get('/dashboard', requireLogin, (req, res) => {
     </div>
   `;
 
-  // Tabs
   const tabsHTML = `
     <div class="tabs">
       <a class="tab ${tab === 'calendar' ? 'active' : ''}" href="/dashboard?tab=calendar">Calendar</a>
@@ -414,17 +388,11 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const content = `
     ${tabsHTML}
     <div class="grid">
-      ${
-        tab === 'calendar'
-          ? calendarSection
-          : tab === 'mine'
-            ? agendaSection
-            : formSection
-      }
+      ${tab === 'calendar' ? calendarSection : tab === 'mine' ? agendaSection : formSection}
     </div>
   `;
 
-  // Embed appointments + users for client calendar (safe string)
+  // embed data for client calendar
   const safeAppts = JSON.stringify(APPOINTMENTS).replace(/</g, '\\u003c');
   const safeUsers = JSON.stringify(USERS).replace(/</g, '\\u003c');
   const safeMe = JSON.stringify(user.slug);
@@ -432,46 +400,18 @@ app.get('/dashboard', requireLogin, (req, res) => {
   const afterBody = `
 <script>
 (function(){
-  // State from server
   const APPTS = ${safeAppts};
   const USERS = ${safeUsers};
   const ME = ${safeMe};
 
-  // Helpers (client)
-  const fmtDayKey = (d) => {
-    const y = d.getFullYear();
-    const m = (d.getMonth()+1).toString().padStart(2,'0');
-    const day = d.getDate().toString().padStart(2,'0');
-    return \`\${y}-\${m}-\${day}\`;
-  };
-  const sameDay = (aDate, bDate) => {
-    return aDate.getFullYear()===bDate.getFullYear() &&
-           aDate.getMonth()===bDate.getMonth() &&
-           aDate.getDate()===bDate.getDate();
-  };
-  const toLocalHuman = (iso) => {
-    try{
-      const d = new Date(iso);
-      if (isNaN(d.getTime())) return iso;
-      return d.toLocaleString(undefined,{
-        weekday:'short', year:'numeric', month:'short', day:'2-digit',
-        hour:'2-digit', minute:'2-digit'
-      });
-    }catch{ return iso; }
-  };
-  const byStartTime = (a,b) => new Date(a.startAtISO) - new Date(b.startAtISO);
-
-  // Calendar DOM nodes
-  const isCalendar = document.getElementById('calGrid') !== null;
-  if(!isCalendar) return; // user on other tab
-
-  const calTitle = document.getElementById('calTitle');
   const dowRow = document.getElementById('dowRow');
   const grid = document.getElementById('calGrid');
+  const titleEl = document.getElementById('calTitle');
   const dayDetails = document.getElementById('dayDetails');
   const prevBtn = document.getElementById('prevBtn');
   const nextBtn = document.getElementById('nextBtn');
   const todayBtn = document.getElementById('todayBtn');
+  if (!grid) return; // not on calendar tab
 
   // Build DOW header (Mon-Sun)
   const DOW = ['Mon','Tue','Wed','Thu','Fri','Sat','Sun'];
@@ -482,56 +422,60 @@ app.get('/dashboard', requireLogin, (req, res) => {
     dowRow.appendChild(el);
   });
 
-  let viewDate = new Date(); // current month
-  const firstDayOfMonth = (d) => new Date(d.getFullYear(), d.getMonth(), 1);
-  const daysInMonth = (y,m) => new Date(y, m+1, 0).getDate();
+  const fmtDayKey = (d) => {
+    const y = d.getFullYear();
+    const m = (d.getMonth()+1).toString().padStart(2,'0');
+    const day = d.getDate().toString().padStart(2,'0');
+    return \`\${y}-\${m}-\${day}\`;
+  };
+  const sameDay = (a,b) => a.getFullYear()===b.getFullYear() && a.getMonth()===b.getMonth() && a.getDate()===b.getDate();
+  const toLocalHuman = (iso) => {
+    try { const d = new Date(iso); if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString(undefined,{ weekday:'short', year:'numeric', month:'short', day:'2-digit', hour:'2-digit', minute:'2-digit' });
+    } catch { return iso; }
+  };
+  const byStart = (a,b) => new Date(a.startAtISO) - new Date(b.startAtISO);
 
-  function buildMonthMatrix(baseDate){
-    // Start with first of month
-    const first = firstDayOfMonth(baseDate);
-    // Convert JS Sunday(0) start to Monday(1) start index
-    let weekday = first.getDay(); // 0-6 (Sun-Sat)
-    if (weekday === 0) weekday = 7; // treat Sunday as 7
-    const lead = weekday - 1; // days to fill from previous month
+  let viewDate = new Date();
 
-    const totalCells = 42; // 6 weeks grid
-    const matrix = [];
-    // Start date = first day minus lead
-    const start = new Date(first.getFullYear(), first.getMonth(), 1 - lead);
-    for(let i=0;i<totalCells;i++){
-      const d = new Date(start.getFullYear(), start.getMonth(), start.getDate()+i);
-      matrix.push(d);
+  function firstOfMonth(d){ return new Date(d.getFullYear(), d.getMonth(), 1); }
+  function buildMatrix(base) {
+    const first = firstOfMonth(base);
+    let wd = first.getDay(); if (wd===0) wd=7; // Sun->7
+    const lead = wd-1;
+    const total = 42;
+    const start = new Date(first.getFullYear(), first.getMonth(), 1-lead);
+    const cells = [];
+    for (let i=0;i<total;i++){
+      cells.push(new Date(start.getFullYear(), start.getMonth(), start.getDate()+i));
     }
-    return matrix;
+    return cells;
   }
 
   function render(){
-    // Title
-    const titleDate = new Date(viewDate.getFullYear(), viewDate.getMonth(), 1);
-    calTitle.textContent = titleDate.toLocaleDateString(undefined,{ month:'long', year:'numeric' });
+    const month = viewDate.getMonth();
+    const year = viewDate.getFullYear();
+    titleEl.textContent = new Date(year, month, 1).toLocaleDateString(undefined,{ month:'long', year:'numeric' });
 
-    // Build calendar day -> appts mapping
-    const map = new Map(); // key: YYYY-MM-DD -> array of appts
+    // Map day -> items
+    const map = new Map();
     APPTS.forEach(a => {
       const d = new Date(a.startAtISO);
       if (isNaN(d.getTime())) return;
       const key = fmtDayKey(d);
-      if(!map.has(key)) map.set(key, []);
+      if (!map.has(key)) map.set(key, []);
       map.get(key).push(a);
     });
 
-    // Grid
     grid.innerHTML = '';
     const today = new Date();
-    const month = viewDate.getMonth();
-    const year = viewDate.getFullYear();
-    const cells = buildMonthMatrix(viewDate);
+    const cells = buildMatrix(viewDate);
 
     cells.forEach(d => {
       const cell = document.createElement('button');
       cell.type = 'button';
       cell.className = 'cal-cell';
-      if (d.getMonth() !== month) cell.classList.add('out');
+      if (d.getMonth() !== month) cell.classList.add('cal-out');
       if (sameDay(d, today)) cell.classList.add('cal-today');
 
       const num = document.createElement('div');
@@ -539,128 +483,91 @@ app.get('/dashboard', requireLogin, (req, res) => {
       num.textContent = d.getDate();
       cell.appendChild(num);
 
-      const dots = document.createElement('div');
-      dots.className = 'cal-dots';
+      const dotsWrap = document.createElement('div');
+      dotsWrap.className = 'cal-dots';
 
       const key = fmtDayKey(d);
-      const list = (map.get(key) || []).slice().sort(byStartTime);
-      // Up to 3 dots (stone then pencil)
-      const stones = list.filter(a => a.status === 'stone');
-      const pencils = list.filter(a => a.status === 'pencil');
+      const list = (map.get(key) || []).slice().sort(byStart);
+
+      const stones = list.filter(a=>a.status==='stone');
+      const pencils = list.filter(a=>a.status==='pencil');
+
       const addDot = (color) => {
         const dot = document.createElement('span');
         dot.className = 'cal-dot';
         dot.style.background = color;
-        dots.appendChild(dot);
+        dotsWrap.appendChild(dot);
       };
+      // Up to 3 dots, preferring stone
       stones.slice(0,3).forEach(()=>addDot('var(--stone)'));
       if (stones.length < 3) {
         pencils.slice(0, 3 - stones.length).forEach(()=>addDot('var(--pencil)'));
       }
+      if (list.length) cell.appendChild(dotsWrap);
 
-      if (list.length) cell.appendChild(dots);
-
-      cell.addEventListener('click', () => showDayDetails(d, list));
+      cell.addEventListener('click', ()=> showDay(d, list));
       grid.appendChild(cell);
     });
 
-    // Default select: today (if in month) or first day of this month
-    const defaultKey = fmtDayKey(today);
-    if (cells.some(c => fmtDayKey(c) === defaultKey && c.getMonth() === month)) {
-      showDayDetails(today, map.get(defaultKey)||[]);
-    } else {
-      const first = new Date(year, month, 1);
-      const key = fmtDayKey(first);
-      showDayDetails(first, map.get(key)||[]);
-    }
+    // Auto-select today if visible, else first of month
+    const todayKey = fmtDayKey(today);
+    const hasToday = cells.some(c => fmtDayKey(c)===todayKey && c.getMonth()===month);
+    showDay(hasToday ? today : new Date(year, month, 1), map.get(hasToday ? todayKey : fmtDayKey(new Date(year,month,1))) || []);
   }
 
-  function showDayDetails(date, items){
+  function showDay(date, items){
     dayDetails.innerHTML = '';
-    const h = document.createElement('div');
-    h.className = 'kicker';
-    h.textContent = 'Day';
-    const title = document.createElement('h2');
-    title.style.margin = '4px 0 10px 0';
-    title.textContent = date.toLocaleDateString(undefined,{ weekday:'long', year:'numeric', month:'long', day:'numeric' });
-    dayDetails.appendChild(h);
-    dayDetails.appendChild(title);
+    const h = document.createElement('div'); h.className='kicker'; h.textContent='Day';
+    const t = document.createElement('h2'); t.style.margin='4px 0 10px 0';
+    t.textContent = date.toLocaleDateString(undefined,{ weekday:'long', year:'numeric', month:'long', day:'numeric' });
+    dayDetails.appendChild(h); dayDetails.appendChild(t);
 
     if (!items.length) {
-      const empty = document.createElement('div');
-      empty.className = 'empty';
-      empty.textContent = 'No appointments on this day.';
-      dayDetails.appendChild(empty);
-      return;
+      const empty = document.createElement('div'); empty.className='empty'; empty.textContent='No appointments on this day.'; dayDetails.appendChild(empty); return;
     }
 
     const ul = document.createElement('ul');
-    items.slice().sort(byStartTime).forEach(appt => {
-      const li = document.createElement('li');
-      li.className = 'app';
+    items.slice().sort(byStart).forEach(appt => {
+      const li = document.createElement('li'); li.className='app';
 
-      const top = document.createElement('div');
-      top.className = 'inline-actions';
-      top.style.justifyContent = 'space-between';
+      const whoUser = USERS.find(u=>u.slug===appt.createdBySlug);
+      const whoChip = document.createElement('span');
+      whoChip.className = 'creator ' + (whoUser ? whoUser.slug : '');
+      whoChip.textContent = whoUser ? whoUser.fullName : appt.createdBySlug;
 
-      const left = document.createElement('div');
-      left.style.display = 'flex';
-      left.style.gap = '8px';
-      left.style.alignItems = 'center';
+      const top = document.createElement('div'); top.className='inline-actions'; top.style.justifyContent='space-between';
+      const left = document.createElement('div'); left.style.display='flex'; left.style.gap='8px'; left.style.alignItems='center'; left.style.flexWrap='wrap';
 
-      const strong = document.createElement('strong');
-      strong.textContent = appt.title;
+      const strong = document.createElement('strong'); strong.textContent = appt.title;
 
-      const pill = document.createElement('span');
-      pill.className = 'pill';
-      const dot = document.createElement('span');
-      dot.className = 'dot';
-      if (appt.status === 'stone') dot.style.background = 'var(--stone)'; else dot.style.background = 'var(--pencil)';
-      const text = document.createTextNode(appt.status === 'stone' ? ' set in stone' : ' set in pencil');
-      pill.appendChild(dot); pill.appendChild(text);
+      const pill = document.createElement('span'); pill.className='pill';
+      const dot = document.createElement('span'); dot.className='dot';
+      dot.style.background = (appt.status==='stone') ? 'var(--stone)' : 'var(--pencil)';
+      pill.appendChild(dot); pill.appendChild(document.createTextNode(appt.status==='stone' ? ' set in stone' : ' set in pencil'));
 
       left.appendChild(strong);
       left.appendChild(pill);
+      left.appendChild(whoChip);
       top.appendChild(left);
 
-      // Delete form
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/appointments/delete';
-      form.onsubmit = () => confirm('Delete this appointment?');
-      const hid = document.createElement('input');
-      hid.type = 'hidden';
-      hid.name = 'id';
-      hid.value = String(appt.id);
-      const btn = document.createElement('button');
-      btn.className = 'secondary danger';
-      btn.textContent = 'Delete';
-      form.appendChild(hid);
-      form.appendChild(btn);
-      top.appendChild(form);
+      // delete only if creator
+      if (appt.createdBySlug === ME) {
+        const form = document.createElement('form'); form.method='POST'; form.action='/appointments/delete'; form.onsubmit=()=>confirm('Delete this appointment?');
+        const hid = document.createElement('input'); hid.type='hidden'; hid.name='id'; hid.value=String(appt.id);
+        const btn = document.createElement('button'); btn.className='secondary danger'; btn.textContent='Delete';
+        form.appendChild(hid); form.appendChild(btn);
+        top.appendChild(form);
+      }
 
-      const meta = document.createElement('div');
-      meta.className = 'muted';
-      meta.style.marginTop = '6px';
+      const meta = document.createElement('div'); meta.className='muted'; meta.style.marginTop='6px';
       meta.textContent = 'When: ' + toLocalHuman(appt.startAtISO) + ' · Duration: ' + appt.durationMins + ' mins';
 
-      const note = appt.note ? (()=>{
-        const d = document.createElement('div');
-        d.style.marginTop = '6px';
-        d.textContent = appt.note;
-        return d;
-      })() : null;
-
-      const who = document.createElement('div');
-      who.className = 'muted';
-      who.style.marginTop = '6px';
-      const creator = USERS.find(u=>u.slug===appt.createdBySlug)?.fullName || appt.createdBySlug;
-      who.textContent = 'Created by ' + creator + ' · ' + toLocalHuman(appt.createdAtISO);
-
-      li.appendChild(top);
-      li.appendChild(meta);
-      if (note) li.appendChild(note);
-      li.appendChild(who);
+      if (appt.note) {
+        const note = document.createElement('div'); note.style.marginTop='6px'; note.textContent = appt.note;
+        li.appendChild(top); li.appendChild(meta); li.appendChild(note);
+      } else {
+        li.appendChild(top); li.appendChild(meta);
+      }
       ul.appendChild(li);
     });
     dayDetails.appendChild(ul);
@@ -700,7 +607,6 @@ app.post('/appointments/create', requireLogin, (req, res) => {
     return res.send(layoutHTML('Error', body, user));
   }
 
-  // Convert datetime-local → ISO (assumes user's local timezone)
   const startDate = new Date(startAtRaw);
   const startAtISO = isNaN(startDate.getTime()) ? startAtRaw : startDate.toISOString();
   const durationMins = Math.max(1, parseInt(durationMinsRaw || '60', 10) || 60);
@@ -711,26 +617,29 @@ app.post('/appointments/create', requireLogin, (req, res) => {
     startAtISO,
     durationMins,
     status,
-    note, // escaped on render where needed
+    note,
     createdBySlug: user.slug,
     createdAtISO: new Date().toISOString(),
   };
 
   APPOINTMENTS.push(appt);
-  // Return to Agenda so it's obvious it was added; Calendar will also show it
   res.redirect('/dashboard?tab=mine');
 });
 
-// Delete appointment
+// Delete appointment (server enforces creator only)
 app.post('/appointments/delete', requireLogin, (req, res) => {
+  const user = req.user;
   const id = parseInt((req.body.id || '').trim(), 10);
   if (Number.isInteger(id)) {
-    APPOINTMENTS = APPOINTMENTS.filter(a => a.id !== id);
+    const appt = APPOINTMENTS.find(a => a.id === id);
+    if (appt && appt.createdBySlug === user.slug) {
+      APPOINTMENTS = APPOINTMENTS.filter(a => a.id !== id);
+    }
   }
   res.redirect('/dashboard?tab=mine');
 });
 
-// --------- Start ----------
+// ---- Start ----
 app.listen(PORT, () => {
   console.log(`✅ AdjitTime running at http://localhost:${PORT}`);
 });
